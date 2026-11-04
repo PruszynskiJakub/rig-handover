@@ -1,0 +1,56 @@
+# Plan morning-digest § 3 / § 4. Builds the preview of /digest/2026-10-28 in CI and deploys it
+# to GitHub Pages. The page is never committed (ADR 0003): the lane marker lives only in the
+# repo secret LANE_MARKER. Clean-up (§ 4): delete the secret, run this again — the same link then
+# shows "no marker set".
+name: preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      night:
+        description: Night to preview (YYYY-MM-DD)
+        default: '2026-10-28'
+        required: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+      - name: Save the page as one HTML file
+        env:
+          LANE_MARKER: ${{ secrets.LANE_MARKER }}
+          PORT: '8787'
+          NIGHT: ${{ inputs.night }}
+        run: |
+          pnpm start > rig.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:8787/health >/dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -sf "localhost:8787/digest/$NIGHT" -o _site/index.html
+          kill %1
+          if [ -n "$LANE_MARKER" ]; then echo "banner: marker set"; else grep -q 'no marker set' _site/index.html && echo "banner: no marker set"; fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+      - id: deploy
+        uses: actions/deploy-pages@v4
